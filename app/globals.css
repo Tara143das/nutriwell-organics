@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== Nutriwell × Nutriveda Design System ===== */
+:root {
+  --paper: #fdfcf8;
+  --cream: #f6f2e7;
+  --sand: #ece4cf;
+  --ink: #14251b;
+  --muted: #5d6b61;
+  --line: #e6dfcc;
+  --forest: #0f4d2c;
+  --forest-deep: #0a3520;
+  --gold: #b07f24;
+  --gold-soft: #e7c886;
+  --gold-pale: #f6ead0;
+  --ease-veda: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.font-display {
+  font-family: var(--font-display), Georgia, serif;
+}
+
+.font-sans {
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.text-gold-gradient {
+  background: linear-gradient(115deg, #e9c877 0%, #c08a2a 45%, #9a6a17 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Reveal on scroll */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.9s var(--ease-veda), transform 0.9s var(--ease-veda);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Marquee */
+@keyframes marquee-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-track {
+  animation: marquee-left 32s linear infinite;
+}
+
+/* Soft card hover */
+.veda-card {
+  transition: transform 0.5s var(--ease-veda), box-shadow 0.5s var(--ease-veda), border-color 0.5s var(--ease-veda);
+}
+.veda-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 24px 50px -28px rgba(15, 77, 44, 0.28);
+}
+
+/* Typewriter caret */
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.type-caret {
+  animation: caret-blink 1s step-end infinite;
+  color: var(--gold);
+}
+
+::selection {
+  background: var(--gold-soft);
+  color: var(--forest-deep);
+}
+/* ===== Ingredients Neon Glow & Utility Classes ===== */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.text-glow-gold {
+  transition: all 0.4s ease;
+}
+.group:hover .text-glow-gold {
+  text-shadow: 0 0 12px rgba(176, 127, 36, 0.8), 0 0 25px rgba(176, 127, 36, 0.4);
+  color: #b07f24;
+}
+
+.text-glow-forest {
+  transition: all 0.4s ease;
+}
+.group:hover .text-glow-forest {
+  text-shadow: 0 0 12px rgba(15, 77, 44, 0.8), 0 0 25px rgba(15, 77, 44, 0.4);
+  color: #0f4d2c;
+}
+
+.card-glow-gold {
+  transition: all 0.5s ease;
+}
+.card-glow-gold:hover {
+  box-shadow: 0 0 35px rgba(176, 127, 36, 0.35), inset 0 0 20px rgba(176, 127, 36, 0.1);
+  transform: translateY(-8px);
+}
+
+.card-glow-forest {
+  transition: all 0.5s ease;
+}
+.card-glow-forest:hover {
+  box-shadow: 0 0 35px rgba(15, 77, 44, 0.35), inset 0 0 20px rgba(15, 77, 44, 0.1);
+  transform: translateY(-8px);
+}
+/* ══════════════════════════════════════════
+   SHOP PAGE — Animations & Utilities
+   ══════════════════════════════════════════ */
+
+/* Hero fade-in */
+.shop-hero-fade {
+  opacity: 0;
+  transform: translateY(18px);
+  animation: shopFadeUp 0.8s ease-out forwards;
+}
+
+@keyframes shopFadeUp {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Sort dropdown */
+.shop-dropdown {
+  animation: shopDropIn 0.25s ease-out;
+}
+
+@keyframes shopDropIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Card scroll reveal */
+.shop-card-anim {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.65s ease-out, transform 0.65s ease-out;
+}
+
+.shop-card-anim.shop-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Hide scrollbar for pills */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ══════════════════════════════════════════
+   PRODUCT DETAIL PAGE — Animations
+   ══════════════════════════════════════════ */
+
+.pdp-gallery-fade {
+  opacity: 0;
+  transform: translateX(-20px);
+  animation: pdpSlideIn 0.7s ease-out 0.15s forwards;
+}
+
+.pdp-info-fade {
+  opacity: 0;
+  transform: translateX(20px);
+  animation: pdpSlideIn 0.7s ease-out 0.3s forwards;
+}
+
+@keyframes pdpSlideIn {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.pdp-tab-fade {
+  animation: pdpTabFade 0.35s ease-out;
+}
+
+@keyframes pdpTabFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
