@@ -2,121 +2,126 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useCart } from '@/lib/cartContext'
 
 export default function ProductCard({ product }) {
-  const [loaded, setLoaded] = useState(false)
-  const [hovered, setHovered] = useState(false)
+  const [added, setAdded] = useState(false)
+  const { addToCart } = useCart()
 
-  const { name, slug, tagline, images, price, mrp, category, isFeatured, stock } = product
+  if (!product) return null
 
-  const discount = mrp && price ? Math.round(((mrp - price) / mrp) * 100) : 0
-  const img1 = images?.[0] || '/images/Sacred Botanicals.png'
-  const img2 = images?.[1] || img1
-  const isNew = product.createdAt
-    ? Date.now() - product.createdAt.toMillis() < 30 * 24 * 3600 * 1000
-    : false
+  const {
+    id,
+    name,
+    slug,
+    price,
+    compareAtPrice,
+    category,
+    image,
+    images,
+    tagline,
+    stock = 10,
+    concerns = []
+  } = product
+
+  const mrp = compareAtPrice || price
+  const discount = mrp && price && mrp > price ? Math.round(((mrp - price) / mrp) * 100) : 0
+  const displayImage = image || images?.[0] || '/images/Sacred Botanicals.png'
+
+  const handleQuickAdd = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    addToCart(product, 1)
+    setAdded(true)
+    setTimeout(() => setAdded(false), 2000)
+  }
 
   return (
-    <Link
-      href={`/product/${slug}`}
-      className="group block"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {/* ── Image ── */}
-      <div className="relative aspect-[3/4] rounded-[1.5rem] overflow-hidden bg-[var(--cream)] shadow-[0_8px_30px_-12px_rgba(10,53,32,0.12)] group-hover:shadow-[0_20px_50px_-15px_rgba(10,53,32,0.22)] transition-shadow duration-700">
-
-        {/* primary image */}
-        <img
-          src={img1}
-          alt={name}
-          loading="lazy"
-          onLoad={() => setLoaded(true)}
-          className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] ${
-            hovered ? 'opacity-0 scale-[1.06]' : 'opacity-100 scale-100'
-          } ${loaded ? '' : '!opacity-0'}`}
-        />
-
-        {/* hover image crossfade */}
-        {img2 !== img1 && (
+    <div className="group relative flex flex-col justify-between h-full rounded-[2rem] bg-[var(--cream)]/40 border border-[var(--line)] hover:border-[var(--gold)]/40 overflow-hidden transition-all duration-500 hover:shadow-[0_20px_40px_-15px_rgba(10,53,32,0.12)]">
+      
+      {/* TOP IMAGE CONTAINER */}
+      <div>
+        <Link href={`/product/${slug}`} className="block relative aspect-[3/4] overflow-hidden bg-[var(--cream)]">
           <img
-            src={img2}
-            alt=""
-            loading="lazy"
-            className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] ${
-              hovered ? 'opacity-100 scale-100' : 'opacity-0 scale-[1.06]'
-            }`}
+            src={displayImage}
+            alt={name}
+            className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
           />
-        )}
 
-        {/* shimmer placeholder */}
-        {!loaded && (
-          <div className="absolute inset-0 bg-gradient-to-br from-[var(--cream)] via-[var(--sand)]/30 to-[var(--cream)] animate-pulse" />
-        )}
-
-        {/* badges */}
-        <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
-          {isFeatured && (
-            <span className="px-2.5 py-1 bg-[var(--gold)]/90 backdrop-blur-sm text-white font-sans text-[9px] uppercase tracking-[0.15em] rounded-full leading-none">
-              Bestseller
-            </span>
-          )}
-          {isNew && (
-            <span className="px-2.5 py-1 bg-[var(--forest)]/90 backdrop-blur-sm text-white font-sans text-[9px] uppercase tracking-[0.15em] rounded-full leading-none">
-              New
-            </span>
-          )}
-        </div>
-
-        {/* quick-add glassmorphism overlay */}
-        <div className={`absolute bottom-0 left-0 right-0 p-3 z-10 transition-all duration-500 ease-out ${
-          hovered ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
-        }`}>
-          <button
-            onClick={e => { e.preventDefault(); e.stopPropagation() }}
-            className="w-full py-2.5 bg-white/75 backdrop-blur-xl text-[var(--forest)] font-sans text-[11px] uppercase tracking-[0.18em] rounded-xl border border-white/50 hover:bg-[var(--forest)] hover:text-white hover:border-[var(--forest)] transition-all duration-300"
-          >
-            Add to Cart
-          </button>
-        </div>
-
-        {/* out of stock */}
-        {stock === 0 && (
-          <div className="absolute inset-0 bg-[var(--ink)]/35 backdrop-blur-[2px] flex items-center justify-center z-20 rounded-[1.5rem]">
-            <span className="px-4 py-1.5 bg-white/90 text-[var(--ink)] font-sans text-[10px] uppercase tracking-[0.15em] rounded-full">
-              Sold Out
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* ── Info ── */}
-      <div className="mt-3.5 px-1">
-        <p className="font-sans text-[9px] uppercase tracking-[0.2em] text-[var(--gold)] mb-1">
-          {category}
-        </p>
-        <h3 className="font-display text-[15px] md:text-base text-[var(--ink)] leading-snug group-hover:text-[var(--forest)] transition-colors duration-300">
-          {name}
-        </h3>
-        {tagline && (
-          <p className="font-sans text-[11px] text-[var(--muted)] mt-0.5 line-clamp-1 leading-relaxed">
-            {tagline}
-          </p>
-        )}
-        <div className="flex items-center gap-2 mt-2">
-          <span className="font-display text-base md:text-lg text-[var(--forest)] font-semibold">
-            ₹{price}
-          </span>
-          {mrp > price && (
-            <>
-              <span className="font-sans text-xs text-[var(--muted)] line-through">₹{mrp}</span>
-              <span className="font-sans text-[9px] text-[var(--gold)] bg-[var(--gold-pale)] px-2 py-0.5 rounded-full font-medium">
+          {/* Badges Overlay */}
+          <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
+            {discount > 0 && (
+              <span className="px-2.5 py-1 bg-[var(--gold)] text-white font-sans text-[9px] font-bold uppercase tracking-wider rounded-full shadow-md">
                 {discount}% OFF
               </span>
-            </>
+            )}
+            {stock <= 5 && stock > 0 && (
+              <span className="px-2.5 py-1 bg-red-950/80 backdrop-blur-md text-red-200 font-sans text-[9px] font-semibold uppercase tracking-wider rounded-full border border-red-500/30">
+                Only {stock} Left
+              </span>
+            )}
+          </div>
+        </Link>
+
+        {/* DETAILS CONTENT */}
+        <div className="p-4 md:p-5 space-y-2">
+          
+          {/* Category & Concern */}
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider">
+            <span className="font-sans font-bold text-[var(--gold)]">
+              {category || 'Sacred Remedy'}
+            </span>
+            {concerns?.[0] && (
+              <span className="font-sans text-[var(--forest)] bg-white px-2 py-0.5 rounded-full font-medium border border-[var(--line)]">
+                {concerns[0]}
+              </span>
+            )}
+          </div>
+
+          {/* Title */}
+          <Link href={`/product/${slug}`} className="block group-hover:text-[var(--forest)] transition-colors">
+            <h3 className="font-display text-base md:text-lg text-[var(--ink)] leading-snug line-clamp-1">
+              {name}
+            </h3>
+          </Link>
+
+          {/* Tagline */}
+          {tagline && (
+            <p className="font-sans text-[11px] text-[var(--muted)] italic line-clamp-1">
+              {tagline}
+            </p>
           )}
+
+          {/* Price Box */}
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="font-display text-lg text-[var(--forest)] font-bold">
+              ₹{price}
+            </span>
+            {mrp > price && (
+              <span className="font-sans text-xs text-[var(--muted)] line-through">
+                ₹{mrp}
+              </span>
+            )}
+          </div>
+
         </div>
       </div>
-    </Link>
+
+      {/* QUICK ADD ACTION BUTTON */}
+      <div className="p-4 md:p-5 pt-0">
+        <button
+          onClick={handleQuickAdd}
+          disabled={stock === 0}
+          className={`w-full py-3 rounded-full font-sans text-[11px] font-bold uppercase tracking-[0.16em] transition-all duration-400 shadow-md ${
+            added
+              ? 'bg-[var(--gold)] text-white scale-[0.98]'
+              : 'bg-[var(--forest)] text-white hover:bg-[var(--forest-deep)] hover:shadow-emerald-900/20'
+          } disabled:opacity-40 disabled:cursor-not-allowed`}
+        >
+          {added ? '✓ Added to Cart' : 'Quick Add +'}
+        </button>
+      </div>
+
+    </div>
   )
 }

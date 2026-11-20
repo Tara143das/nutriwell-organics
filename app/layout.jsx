@@ -4,6 +4,8 @@ import Navbar from '@/components/layout/Navbar'
 import Footer from '@/components/layout/Footer'
 import HolisticChatbot from '@/components/ui/HolisticChatbot'
 import { AuthProvider } from '@/lib/auth'
+import { CartProvider } from '@/lib/cartContext'
+import CartDrawer from '@/components/cart/CartDrawer'
 
 const manrope = Manrope({
   subsets: ['latin'],
@@ -39,10 +41,13 @@ export default function RootLayout({ children }) {
         suppressHydrationWarning
       >
         <AuthProvider>
-          <Navbar />
-          <main className="flex-grow">{children}</main>
-          <Footer />
-          <HolisticChatbot />
+          <CartProvider>
+            <Navbar />
+            <CartDrawer />
+            <main className="flex-grow">{children}</main>
+            <Footer />
+            <HolisticChatbot />
+          </CartProvider>
         </AuthProvider>
       </body>
     </html>
