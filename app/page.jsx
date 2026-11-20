@@ -3,9 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import ProductCard from '../components/shop/ProductCard';
-import IngredientsSection from '../components/Ingredients';
+import { db } from '@/lib/firebase';
+import ProductCard from '@/components/shop/ProductCard';
+import IngredientsSection from '@/components/Ingredients';
+import ShopByConcern from '@/components/home/ShopByConcern';
+import LabTransparency from '@/components/home/LabTransparency';
+import CountdownTimer from '@/components/home/CountdownTimer';
+import PromoModal from '@/components/home/PromoModal';
 
 /* ===================== HERO SLIDES ===================== */
 const slides = [
@@ -253,10 +257,19 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 6. INGREDIENTS */}
+      {/* 6. DYNAMIC "SHOP BY CONCERN" (Solution Finder) */}
+      <ShopByConcern />
+
+      {/* 6.5 SEASONAL BOTANICAL RESERVE COUNTDOWN TICKER */}
+      <CountdownTimer />
+
+      {/* 7. INGREDIENTS */}
       <IngredientsSection />
 
-      {/* 8. FEATURED PRODUCT */}
+      {/* 8. LAB TRANSPARENCY & PURITY BAR */}
+      <LabTransparency />
+
+      {/* 9. FEATURED PRODUCT */}
       <section className="py-24 px-6 md:px-12 lg:px-20 bg-[#f6f2e7] border-y border-[#e6dfcc]/70">
         <div className="max-w-[1320px] mx-auto">
           <Reveal className="text-center mb-14">
@@ -291,6 +304,10 @@ export default function Home() {
           )}
         </div>
       </section>
+
+      {/* 10. LUXURY PROMO POP-UP MODAL */}
+      <PromoModal />
+
     </main>
   );
 }
