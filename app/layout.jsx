@@ -5,7 +5,9 @@ import Footer from '@/components/layout/Footer'
 import HolisticChatbot from '@/components/ui/HolisticChatbot'
 import { AuthProvider } from '@/lib/auth'
 import { CartProvider } from '@/lib/cartContext'
+import { ToastProvider } from '@/lib/toastContext'
 import CartDrawer from '@/components/cart/CartDrawer'
+import Toast from '@/components/ui/Toast'
 
 const manrope = Manrope({
   subsets: ['latin'],
@@ -41,13 +43,16 @@ export default function RootLayout({ children }) {
         suppressHydrationWarning
       >
         <AuthProvider>
-          <CartProvider>
-            <Navbar />
-            <CartDrawer />
-            <main className="flex-grow">{children}</main>
-            <Footer />
-            <HolisticChatbot />
-          </CartProvider>
+          <ToastProvider>
+            <CartProvider>
+              <Navbar />
+              <CartDrawer />
+              <Toast />
+              <main className="flex-grow">{children}</main>
+              <Footer />
+              <HolisticChatbot />
+            </CartProvider>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

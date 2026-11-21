@@ -1,450 +1,597 @@
-// components/ui/HolisticChatbot.jsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import React, { useState, useEffect } from 'react';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  QUESTIONNAIRE_VERSION,
+  CONSENT_NOTICE,
+  REGISTRATION_QUESTIONS,
+  COMMON_HEALTH_QUESTIONS,
+} from '@/lib/wellnessAssessmentData';
+import { evaluateAssessment } from '@/lib/wellnessEngine';
 
 export default function HolisticChatbot() {
   const [isOpen, setIsOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(true);
-  const [stage, setStage] = useState('legal');
-  const [selectedIssue, setSelectedIssue] = useState(null);
+  const [step, setStep] = useState('consent'); // 'consent' | 'register' | 'questions' | 'evaluating' | 'result'
+  const [hasConsented, setHasConsented] = useState(false);
+  
+  // Seeker Demographics
+  const [seeker, setSeeker] = useState({
+    name: '',
+    mobile: '',
+    email: '',
+    city: '',
+  });
+  const [seekerErrors, setSeekerErrors] = useState({});
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsOpen(true);
-      setIsMinimized(false);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
+  // Answers Map
+  const [answers, setAnswers] = useState({
+    emergency_red_flags: [],
+    r4_age: '',
+    r5_biological_sex: '',
+    r6_primary_concern: '',
+    r7_concern_duration: '',
+    c3_pregnancy_nursing: 'neither',
+    c4_chronic_conditions: ['none_of_above'],
+    c6_prescription_meds: 'no',
+  });
 
-  const wellnessData = {
-    digestion: {
-      title: 'Gut Microbiome & Metabolic Reset',
-      medicine: 'SOLVE Amrit Kanth Ayurvedic Elixir',
-      medSlug: 'solve-amrit-kanth-digestive',
-      desc: 'Formulated to neutralize acid reflux and repair the stomach lining natively.',
-      yoga: [
-        'Vajrasana — Post-meal digestion',
-        'Ardha Matsyendrasana — Spinal twist',
-        'Pavanamuktasana — Toxin release',
-      ],
-      diet:
-        'Intermittent fasting (14 hrs). Warm ginger-fennel water morning & night. Eliminate raw vegetables after sunset; switch to warm cooked stews (Khichdi).',
-    },
-    skin: {
-      title: 'Cellular Skin Detoxification',
-      medicine: 'REjuvenate Argan Botanical Cleanser',
-      medSlug: 'rejuvenate-moroccan-argan-oil-face-wash',
-      desc: 'Clinical-grade botanical extraction to clear pores without stripping natural oils.',
-      yoga: [
-        'Sarvangasana — Blood flow to face',
-        'Halasana — Thyroid stimulation',
-        'Surya Namaskar — Complete detox cycle',
-      ],
-      diet:
-        'High hydration protocol (3L daily). Antioxidant-rich berries + cold-pressed Omega-3. Strictly avoid refined sugars, dairy, and high-glycemic processed foods.',
-    },
-    stress: {
-      title: 'Nervous System & Cortisol Balance',
-      medicine: 'Megawell Cold-Pressed Omega-3 Complex',
-      medSlug: 'megawell-omega-3-complex',
-      desc: 'High-potency plant-based brain food to repair neural pathways and induce deep sleep.',
-      yoga: [
-        'Viparita Karani — Legs up the wall',
-        'Balasana — Child pose for grounding',
-        'Yoga Nidra — Deep neural relaxation',
-      ],
-      diet:
-        'Ashwagandha root powder with warm almond milk before sleep. Magnesium-rich pumpkin seeds. Absolute zero caffeine after 1:00 PM.',
-    },
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [assessmentResult, setAssessmentResult] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Compile active question list
+  const activeQuestions = [
+    ...COMMON_HEALTH_QUESTIONS,
+    ...REGISTRATION_QUESTIONS,
+  ];
+
+  // Mobile Validation (10-digit Indian Mobile)
+  const validateSeeker = () => {
+    const errors = {};
+    if (!seeker.name.trim()) errors.name = 'Please enter your full name';
+    const mobileDigits = seeker.mobile.replace(/\D/g, '');
+    if (!/^[6-9]\d{9}$/.test(mobileDigits)) {
+      errors.mobile = 'Enter a valid 10-digit Indian mobile number (e.g. 9876543210)';
+    }
+    setSeekerErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
-  const handleLegalAccept = () => setStage('assessment');
-
-  const handleSelection = (key) => {
-    setSelectedIssue(key);
-    setStage('analyzing');
-    setTimeout(() => setStage('result'), 2500);
+  const handleStartQuestions = (e) => {
+    e.preventDefault();
+    if (!validateSeeker()) return;
+    setStep('questions');
+    setCurrentQuestionIndex(0);
   };
 
-  const resetTerminal = () => {
-    setStage('assessment');
-    setSelectedIssue(null);
+  const handleOptionSelect = (questionId, optionValue, isMulti = false) => {
+    setAnswers((prev) => {
+      if (!isMulti) {
+        return { ...prev, [questionId]: optionValue };
+      }
+      const existing = prev[questionId] || [];
+      if (optionValue === 'none_of_above') {
+        return { ...prev, [questionId]: ['none_of_above'] };
+      }
+      const filtered = existing.filter((item) => item !== 'none_of_above');
+      if (filtered.includes(optionValue)) {
+        const next = filtered.filter((item) => item !== optionValue);
+        return { ...prev, [questionId]: next.length === 0 ? ['none_of_above'] : next };
+      } else {
+        return { ...prev, [questionId]: [...filtered, optionValue] };
+      }
+    });
   };
 
-  if (!isOpen) return null;
+  const handleNextQuestion = () => {
+    const currentQ = activeQuestions[currentQuestionIndex];
+    const currentAnswer = answers[currentQ.id];
 
-  const result = selectedIssue ? wellnessData[selectedIssue] : null;
+    if (!currentAnswer || (Array.isArray(currentAnswer) && currentAnswer.length === 0)) {
+      alert('Please select an option to continue.');
+      return;
+    }
+
+    // Immediate Early Minor Check on R4
+    if (currentQ.id === 'r4_age' && currentAnswer === 'under-18') {
+      finalizeAssessment({ ...answers, r4_age: 'under-18' });
+      return;
+    }
+
+    if (currentQuestionIndex < activeQuestions.length - 1) {
+      setCurrentQuestionIndex((prev) => prev + 1);
+    } else {
+      finalizeAssessment(answers);
+    }
+  };
+
+  const handlePreviousQuestion = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex((prev) => prev - 1);
+    } else {
+      setStep('register');
+    }
+  };
+
+  const finalizeAssessment = async (finalAnswers) => {
+    setStep('evaluating');
+    const result = evaluateAssessment(finalAnswers);
+    setAssessmentResult(result);
+
+    // Save to Firestore 'wellnessAssessments'
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        questionnaire_version: QUESTIONNAIRE_VERSION,
+        seeker_name: seeker.name.trim(),
+        seeker_mobile: seeker.mobile.replace(/\D/g, ''),
+        seeker_email: seeker.email.trim() || null,
+        seeker_city: seeker.city.trim() || null,
+        answers: finalAnswers,
+        evaluation_result: {
+          safe: result.safe,
+          triage_category: result.triage_category,
+          primary_concern: result.primary_concern || null,
+          safety_triage: result.safety_triage,
+        },
+        call_status: result.call_status_default,
+        assigned_to: null,
+        created_at: serverTimestamp(),
+      };
+
+      await addDoc(collection(db, 'wellnessAssessments'), payload);
+      setSaveSuccess(true);
+    } catch (err) {
+      console.error('Failed to record wellness assessment lead:', err);
+      // Fallback local storage backup
+      try {
+        const localBackups = JSON.parse(localStorage.getItem('nwo_assessment_backups') || '[]');
+        localBackups.push({ ...seeker, answers: finalAnswers, date: new Date().toISOString() });
+        localStorage.setItem('nwo_assessment_backups', JSON.stringify(localBackups));
+      } catch (e) {
+        // ignore storage error
+      }
+    } finally {
+      setIsSubmitting(false);
+      setStep('result');
+    }
+  };
+
+  const handleReset = () => {
+    setStep('consent');
+    setHasConsented(false);
+    setSeeker({ name: '', mobile: '', email: '', city: '' });
+    setAnswers({
+      emergency_red_flags: [],
+      r4_age: '',
+      r5_biological_sex: '',
+      r6_primary_concern: '',
+      r7_concern_duration: '',
+      c3_pregnancy_nursing: 'neither',
+      c4_chronic_conditions: ['none_of_above'],
+      c6_prescription_meds: 'no',
+    });
+    setAssessmentResult(null);
+    setCurrentQuestionIndex(0);
+  };
 
   return (
     <>
-      <style jsx global>{`
-        @keyframes nw-spin {
-          to { transform: rotate(360deg); }
-        }
-        @keyframes nw-pulse-ring {
-          0% { transform: scale(0.85); opacity: 0.9; }
-          70% { transform: scale(1.45); opacity: 0; }
-          100% { transform: scale(1.45); opacity: 0; }
-        }
-        @keyframes nw-glow-breathe {
-          0%, 100% { filter: drop-shadow(0 0 8px #2A7A6E) drop-shadow(0 0 16px #D4A574); }
-          50% { filter: drop-shadow(0 0 18px #3E9B8D) drop-shadow(0 0 28px #C76B4F) drop-shadow(0 0 12px #D4A574); }
-        }
-        @keyframes nw-hue-spin {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        @keyframes nw-slide-up {
-          0% { transform: translateY(0); }
-          30% { transform: translateY(0); }
-          40% { transform: translateY(-28px); }
-          70% { transform: translateY(-28px); }
-          80% { transform: translateY(-56px); }
-          100% { transform: translateY(-56px); }
-        }
-        @keyframes nw-fade-up {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes nw-shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-        .nw-orb-ring {
-          background: conic-gradient(from 0deg, #2A7A6E, #D4A574, #C76B4F, #3E9B8D, #2A7A6E);
-          animation: nw-spin 2.8s linear infinite;
-        }
-        .nw-orb-pulse-1 {
-          background: conic-gradient(from 90deg, #2A7A6E, #D4A574, #C76B4F, #2A7A6E);
-          animation: nw-pulse-ring 2.2s ease-out infinite;
-        }
-        .nw-orb-pulse-2 {
-          background: conic-gradient(from 180deg, #C76B4F, #3E9B8D, #D4A574, #C76B4F);
-          animation: nw-pulse-ring 2.2s ease-out infinite 0.7s;
-        }
-        .nw-orb-core-glow {
-          animation: nw-glow-breathe 2.4s ease-in-out infinite;
-        }
-        .nw-result-card {
-          animation: nw-fade-up 0.5s ease-out both;
-        }
-        .nw-shimmer-bar {
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-          background-size: 200% 100%;
-          animation: nw-shimmer 2.5s linear infinite;
-        }
-      `}</style>
+      {/* 1. FLOATING ACTION TRIGGER (Image 2 style) */}
+      {!isOpen && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-3 group animate-bounce-subtle">
+          <div className="hidden md:block bg-[#0a1813]/90 backdrop-blur-md border border-[#b07f24]/30 text-[#fdfcf8] px-3.5 py-1.5 rounded-full text-xs font-sans shadow-2xl">
+            <span className="text-[#b07f24] font-semibold">Vaidya AI</span> • Clinical Wellness Triage
+          </div>
+          <button
+            onClick={() => setIsOpen(true)}
+            aria-label="Open Holistic Wellness Chatbot"
+            className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#0a3520] via-[#0f4d2c] to-[#14251b] border-2 border-[#b07f24]/60 text-[#b07f24] shadow-[0_10px_25px_rgba(0,0,0,0.5)] flex items-center justify-center hover:scale-105 active:scale-95 transition-all duration-300 relative"
+          >
+            {/* Glowing Pulse Dot */}
+            <span className="absolute top-1 right-1 w-3 h-3 bg-amber-400 rounded-full animate-ping opacity-75"></span>
+            <span className="absolute top-1 right-1 w-3 h-3 bg-amber-500 rounded-full border border-black"></span>
+            
+            {/* Apothecary Flask SVG */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+          </button>
+        </div>
+      )}
 
-      <div className="fixed bottom-6 right-6 z-[100] flex flex-col items-end w-full max-w-[400px] sm:max-w-[430px] px-4 sm:px-0 pointer-events-none">
-        <div className="pointer-events-auto w-full flex flex-col items-end">
+      {/* 2. FLOATING RIGHT-CORNER ASSESSMENT WIDGET (Image 1 style) */}
+      {isOpen && (
+        <div className="fixed bottom-6 right-6 z-50 w-[420px] max-w-[calc(100vw-1.5rem)] h-[620px] max-h-[88vh] bg-[#0a1813] border border-[#b07f24]/40 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden text-[#fdfcf8] font-sans backdrop-blur-xl animate-in fade-in slide-in-from-bottom-5 duration-300">
+          
+          {/* HEADER BAR WITH MINIMIZE */}
+          <div className="px-5 py-3.5 bg-[#0a2316]/90 border-b border-[#b07f24]/20 flex items-center justify-between select-none">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-6 h-6 rounded-full bg-[#0f4d2c] border border-[#b07f24]/60 flex items-center justify-center text-[#b07f24]">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              </div>
+              <div>
+                <h3 className="text-xs font-bold tracking-widest uppercase text-[#b07f24]">VAIDYA WELLNESS CORE</h3>
+                <p className="text-[10px] text-emerald-400/80 font-mono flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block"></span> NEURAL BOTANICAL LINK ACTIVE
+                </p>
+              </div>
+            </div>
 
-          {/* ========== MAIN TERMINAL ========== */}
-          {!isMinimized && (
-            <div className="w-full mb-5 rounded-[28px] overflow-hidden border border-white/15 shadow-[0_0_60px_rgba(42,122,110,0.35),0_20px_50px_rgba(0,0,0,0.5)] relative"
-              style={{ height: '580px', maxHeight: '80vh' }}
-            >
-              {/* Animated multi-color border glow frame */}
-              <div className="absolute -inset-[1px] rounded-[28px] opacity-80 pointer-events-none"
-                style={{
-                  background: 'linear-gradient(135deg, #2A7A6E, #D4A574, #C76B4F, #3E9B8D, #2A7A6E)',
-                  backgroundSize: '300% 300%',
-                  animation: 'nw-hue-spin 6s ease infinite',
-                }}
-              />
-              <div className="absolute inset-[1.5px] rounded-[26.5px] bg-[#0A1210] overflow-hidden flex flex-col">
-                
-                {/* Ambient orbs inside */}
-                <div className="absolute top-[-30%] left-[-20%] w-[70%] h-[70%] rounded-full bg-teal/25 blur-[80px] pointer-events-none" />
-                <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-amber/15 blur-[70px] pointer-events-none" />
-                <div className="absolute top-[40%] right-[-10%] w-[40%] h-[40%] rounded-full bg-terracotta/10 blur-[60px] pointer-events-none" />
+            <div className="flex items-center space-x-1">
+              {/* Minimize to Right Bottom */}
+              <button
+                onClick={() => setIsOpen(false)}
+                title="Minimize window"
+                className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-stone-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
-                {/* Header */}
-                <div className="relative z-10 px-5 py-4 flex items-center justify-between border-b border-white/10 bg-black/30 backdrop-blur-md">
-                  <div className="flex items-center gap-3">
-                    <div className="relative w-9 h-9 flex items-center justify-center">
-                      <div className="absolute inset-0 rounded-full nw-orb-ring opacity-90" />
-                      <div className="absolute inset-[3px] rounded-full bg-[#0A1210]" />
-                      <div className="relative w-2 h-2 rounded-full bg-cream-light shadow-[0_0_12px_#fff]" />
-                    </div>
-                    <div>
-                      <h3 className="text-[12px] font-bold text-white tracking-[0.18em] uppercase">Vaidya AI Core</h3>
-                      <p className="text-[9px] text-teal-light uppercase tracking-[0.2em] flex items-center gap-1.5 mt-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse" />
-                        Neural Link Active
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setIsMinimized(true)}
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
-                    aria-label="Minimize"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+          {/* MAIN CHAT CONTENT AREA */}
+          <div className="flex-1 overflow-y-auto p-5 custom-scrollbar text-sm space-y-4">
+            
+            {/* STEP 1: CONSENT NOTICE */}
+            {step === 'consent' && (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-[#0f2c1e]/60 border border-[#b07f24]/30 space-y-3">
+                  <div className="flex items-center space-x-2 text-[#b07f24]">
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
-                  </button>
+                    <span className="font-semibold uppercase tracking-wider text-xs">MEDICAL DISCLAIMER & CONSENT</span>
+                  </div>
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    {CONSENT_NOTICE.text}
+                  </p>
+                  <p className="text-[11px] text-stone-400 italic">
+                    {CONSENT_NOTICE.subtext}
+                  </p>
                 </div>
 
-                {/* Body */}
-                <div className="relative z-10 flex-1 overflow-y-auto p-5 scrollbar-hide">
+                <label className="flex items-start space-x-3 cursor-pointer p-2 rounded-lg hover:bg-white/5 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={hasConsented}
+                    onChange={(e) => setHasConsented(e.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-stone-600 text-[#0f4d2c] focus:ring-[#b07f24]"
+                  />
+                  <span className="text-xs text-stone-300">
+                    I acknowledge that this assessment is strictly for educational & lifestyle guidance and is not a medical prescription.
+                  </span>
+                </label>
 
-                  {/* LEGAL */}
-                  {stage === 'legal' && (
-                    <div className="h-full flex flex-col justify-center nw-result-card">
-                      <div className="rounded-2xl border border-amber/40 bg-gradient-to-br from-amber/10 via-black/40 to-black/40 p-5 shadow-[0_0_30px_rgba(212,165,116,0.12)]">
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-8 h-8 rounded-lg bg-amber/20 border border-amber/40 flex items-center justify-center">
-                            <svg className="w-4 h-4 text-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                          </div>
-                          <span className="text-amber text-[11px] font-bold uppercase tracking-[0.2em]">Medical Disclaimer</span>
-                        </div>
-                        <p className="text-[13px] text-cream-light/85 leading-relaxed font-light mb-3">
-                          The <span className="text-white font-semibold">Ayurvedic medicines, organic supplements, botanical formulations</span>, dietary charts, and yogic asanas suggested by this AI are intended strictly for holistic lifestyle balancing.
-                        </p>
-                        <p className="text-[11px] text-cream-light/45 leading-relaxed">
-                          These recommendations do not substitute professional clinical diagnosis, prescription, or treatment by a certified medical practitioner.
-                        </p>
-                      </div>
-                      <button
-                        onClick={handleLegalAccept}
-                        className="mt-6 w-full py-3.5 rounded-xl text-white text-[11px] font-bold uppercase tracking-[0.22em] transition-all duration-300"
-                        style={{
-                          background: 'linear-gradient(135deg, #1E5C52, #2A7A6E, #3E9B8D)',
-                          boxShadow: '0 0 24px rgba(42,122,110,0.55), inset 0 1px 0 rgba(255,255,255,0.15)',
-                        }}
-                      >
-                        I Acknowledge & Proceed
-                      </button>
-                    </div>
-                  )}
+                <button
+                  disabled={!hasConsented}
+                  onClick={() => setStep('register')}
+                  className="w-full py-3 rounded-xl bg-[#0f4d2c] hover:bg-[#145a34] disabled:opacity-40 disabled:cursor-not-allowed border border-[#b07f24]/50 text-white font-medium text-xs tracking-wider uppercase transition-all duration-200 shadow-lg"
+                >
+                  I Acknowledge & Proceed
+                </button>
+              </div>
+            )}
 
-                  {/* ASSESSMENT */}
-                  {stage === 'assessment' && (
-                    <div className="nw-result-card">
-                      <p className="text-[13px] text-cream-light/80 font-light leading-relaxed mb-6">
-                        Initiating holistic scan. Select the primary physiological or neural imbalance you are currently experiencing:
-                      </p>
-                      <div className="flex flex-col gap-3.5">
-                        {[
-                          { key: 'digestion', label: 'Metabolic & Gut Fire Imbalance', sub: 'Acidity · Bloating · Indigestion', accent: '#2A7A6E' },
-                          { key: 'skin', label: 'Cellular Skin Toxicity', sub: 'Acne · Dullness · Pigmentation', accent: '#D4A574' },
-                          { key: 'stress', label: 'Neural Fatigue & Insomnia', sub: 'High Cortisol · Anxiety · Sleep Loss', accent: '#C76B4F' },
-                        ].map((node) => (
-                          <button
-                            key={node.key}
-                            onClick={() => handleSelection(node.key)}
-                            className="group relative w-full p-4 rounded-2xl text-left overflow-hidden transition-all duration-300 border border-white/10 hover:border-white/25"
-                            style={{ background: 'rgba(255,255,255,0.04)' }}
-                          >
-                            <div
-                              className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                              style={{ background: `linear-gradient(90deg, ${node.accent}22, transparent 70%)` }}
-                            />
-                            <div
-                              className="absolute left-0 top-0 bottom-0 w-[3px] rounded-full opacity-60 group-hover:opacity-100 transition-opacity"
-                              style={{ background: node.accent, boxShadow: `0 0 12px ${node.accent}` }}
-                            />
-                            <h4 className="relative z-10 text-[13px] font-bold text-cream-light tracking-wide mb-1 pl-2">{node.label}</h4>
-                            <p className="relative z-10 text-[10px] uppercase tracking-[0.15em] pl-2" style={{ color: node.accent }}>{node.sub}</p>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+            {/* STEP 2: SEEKER REGISTRATION */}
+            {step === 'register' && (
+              <form onSubmit={handleStartQuestions} className="space-y-4">
+                <div className="border-b border-[#b07f24]/20 pb-2">
+                  <h4 className="text-sm font-semibold text-[#f6f2e7]">Seeker Identification</h4>
+                  <p className="text-xs text-stone-400">Please provide your details to personalize the clinical assessment.</p>
+                </div>
 
-                  {/* ANALYZING */}
-                  {stage === 'analyzing' && (
-                    <div className="h-full flex flex-col items-center justify-center">
-                      <div className="relative w-24 h-24 mb-10 flex items-center justify-center">
-                        <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-[#2A7A6E] border-r-[#D4A574] border-b-[#C76B4F] animate-[nw-spin_1s_linear_infinite]" />
-                        <div className="absolute inset-3 rounded-full border-[2px] border-transparent border-b-[#2A7A6E] border-l-[#D4A574] border-t-[#C76B4F] animate-[nw-spin_1.4s_linear_infinite_reverse]" />
-                        <div className="absolute inset-6 rounded-full border border-white/20" />
-                        <div className="w-3 h-3 rounded-full bg-white shadow-[0_0_20px_#fff,0_0_40px_#2A7A6E] animate-pulse" />
-                      </div>
-                      <div className="h-7 overflow-hidden">
-                        <div className="flex flex-col gap-7 animate-[nw-slide-up_3s_ease-in-out_forwards]">
-                          <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-teal-light via-amber to-teal-light">
-                            Scanning dosha profile...
-                          </span>
-                          <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-amber via-terracotta to-amber">
-                            Mapping formulation synergy...
-                          </span>
-                          <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-teal-light via-white to-teal-light">
-                            Generating protocol...
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  <label className="block text-xs text-stone-300 mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={seeker.name}
+                    onChange={(e) => setSeeker({ ...seeker, name: e.target.value })}
+                    placeholder="e.g. Ananya Sen"
+                    className="w-full px-3 py-2 rounded-lg bg-[#07130e] border border-stone-700 focus:border-[#b07f24] text-xs text-white outline-none"
+                  />
+                  {seekerErrors.name && <p className="text-[11px] text-rose-400 mt-1">{seekerErrors.name}</p>}
+                </div>
 
-                  {/* ========== RESULT — EYE CATCHING ========== */}
-                  {stage === 'result' && result && (
-                    <div className="pb-2 space-y-5">
-                      {/* Title block with shimmer */}
-                      <div className="nw-result-card relative overflow-hidden rounded-2xl border border-white/15 p-4"
-                        style={{ background: 'linear-gradient(135deg, rgba(42,122,110,0.25), rgba(212,165,116,0.1), rgba(199,107,79,0.12))' }}
-                      >
-                        <div className="absolute inset-0 nw-shimmer-bar pointer-events-none" />
-                        <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-teal-light mb-1.5 relative z-10">
-                          Diagnostic Protocol Generated
-                        </p>
-                        <h2 className="font-serif text-[22px] font-bold text-white leading-tight relative z-10">
-                          {result.title}
-                        </h2>
+                <div>
+                  <label className="block text-xs text-stone-300 mb-1">10-Digit Mobile Number (India) *</label>
+                  <div className="flex">
+                    <span className="inline-flex items-center px-3 rounded-l-lg bg-stone-800 border border-r-0 border-stone-700 text-xs text-stone-400">+91</span>
+                    <input
+                      type="tel"
+                      required
+                      maxLength={10}
+                      value={seeker.mobile}
+                      onChange={(e) => setSeeker({ ...seeker, mobile: e.target.value.replace(/\D/g, '') })}
+                      placeholder="9876543210"
+                      className="w-full px-3 py-2 rounded-r-lg bg-[#07130e] border border-stone-700 focus:border-[#b07f24] text-xs text-white outline-none"
+                    />
+                  </div>
+                  {seekerErrors.mobile && <p className="text-[11px] text-rose-400 mt-1">{seekerErrors.mobile}</p>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-stone-300 mb-1">Email (Optional)</label>
+                    <input
+                      type="email"
+                      value={seeker.email}
+                      onChange={(e) => setSeeker({ ...seeker, email: e.target.value })}
+                      placeholder="name@email.com"
+                      className="w-full px-3 py-2 rounded-lg bg-[#07130e] border border-stone-700 focus:border-[#b07f24] text-xs text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-stone-300 mb-1">City / Town</label>
+                    <input
+                      type="text"
+                      value={seeker.city}
+                      onChange={(e) => setSeeker({ ...seeker, city: e.target.value })}
+                      placeholder="e.g. Kolkata"
+                      className="w-full px-3 py-2 rounded-lg bg-[#07130e] border border-stone-700 focus:border-[#b07f24] text-xs text-white outline-none"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 rounded-xl bg-[#0f4d2c] hover:bg-[#145a34] border border-[#b07f24]/50 text-white font-medium text-xs tracking-wider uppercase transition-all shadow-lg mt-2"
+                >
+                  Start Assessment Questionnaire
+                </button>
+              </form>
+            )}
+
+            {/* STEP 3: STEP-BY-STEP QUESTIONNAIRE */}
+            {step === 'questions' && (
+              <div className="space-y-4">
+                {/* Progress Indicator */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px] text-stone-400 font-mono">
+                    <span>QUESTION {currentQuestionIndex + 1} OF {activeQuestions.length}</span>
+                    <span>{Math.round(((currentQuestionIndex + 1) / activeQuestions.length) * 100)}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-stone-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#b07f24] to-emerald-400 transition-all duration-300"
+                      style={{ width: `${((currentQuestionIndex + 1) / activeQuestions.length) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Question Prompt */}
+                {(() => {
+                  const q = activeQuestions[currentQuestionIndex];
+                  const currentVal = answers[q.id];
+
+                  return (
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-medium text-[#fdfcf8] leading-snug">{q.prompt}</h4>
+                        {q.subtext && <p className="text-xs text-stone-400 mt-1">{q.subtext}</p>}
                       </div>
 
-                      {/* PHASE 1 — Medicine (Teal Neon Card) */}
-                      <div className="nw-result-card" style={{ animationDelay: '0.1s' }}>
-                        <div className="flex items-center gap-2 mb-2.5">
-                          <span className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-black text-dark"
-                            style={{ background: 'linear-gradient(135deg,#3E9B8D,#2A7A6E)', boxShadow: '0 0 14px rgba(42,122,110,0.7)' }}
-                          >01</span>
-                          <span className="text-[9px] font-bold uppercase tracking-[0.22em] text-teal-light">
-                            Medicine / Supplement
-                          </span>
-                        </div>
-                        <Link href={`/product/${result.medSlug}`}>
-                          <div
-                            className="group relative rounded-2xl p-4 border transition-all duration-300 overflow-hidden cursor-pointer"
-                            style={{
-                              borderColor: 'rgba(62,155,141,0.55)',
-                              background: 'linear-gradient(145deg, rgba(42,122,110,0.35), rgba(10,18,16,0.9))',
-                              boxShadow: '0 0 28px rgba(42,122,110,0.25), inset 0 1px 0 rgba(255,255,255,0.08)',
-                            }}
-                          >
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-teal/30 rounded-full blur-3xl opacity-60 group-hover:opacity-100 transition-opacity" />
-                            <h4 className="relative z-10 font-bold text-[15px] text-white mb-1.5 group-hover:text-teal-light transition-colors">
-                              {result.medicine}
-                            </h4>
-                            <p className="relative z-10 text-[12px] text-cream-light/70 font-light leading-relaxed mb-3">
-                              {result.desc}
-                            </p>
-                            <div className="relative z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-dark"
-                              style={{ background: 'linear-gradient(90deg,#3E9B8D,#D4A574)', boxShadow: '0 0 16px rgba(62,155,141,0.45)' }}
+                      {/* Options */}
+                      <div className="space-y-2 pt-1">
+                        {q.options.map((opt) => {
+                          const isSelected = q.multi_select
+                            ? Array.isArray(currentVal) && currentVal.includes(opt.value)
+                            : currentVal === opt.value;
+
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => handleOptionSelect(q.id, opt.value, q.multi_select)}
+                              className={`w-full text-left p-3 rounded-xl border transition-all text-xs flex items-center justify-between ${
+                                isSelected
+                                  ? 'bg-[#0f4d2c]/80 border-[#b07f24] text-white font-medium shadow-md'
+                                  : 'bg-[#07130e]/70 border-stone-800 text-stone-300 hover:border-stone-600 hover:bg-[#0c1f17]'
+                              }`}
                             >
-                              View Formulation
-                              <svg className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                              </svg>
-                            </div>
-                          </div>
-                        </Link>
+                              <span>{opt.label}</span>
+                              <div
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                                  isSelected ? 'border-amber-400 bg-amber-400/20' : 'border-stone-600'
+                                }`}
+                              >
+                                {isSelected && <span className="w-2 h-2 rounded-full bg-amber-400"></span>}
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
+                    </div>
+                  );
+                })()}
 
-                      {/* PHASE 2 — Yoga (Amber Neon Card) */}
-                      <div className="nw-result-card" style={{ animationDelay: '0.2s' }}>
-                        <div className="flex items-center gap-2 mb-2.5">
-                          <span className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-black text-dark"
-                            style={{ background: 'linear-gradient(135deg,#D4A574,#B8864F)', boxShadow: '0 0 14px rgba(212,165,116,0.7)' }}
-                          >02</span>
-                          <span className="text-[9px] font-bold uppercase tracking-[0.22em] text-amber">
-                            Yogic Neural Reset
-                          </span>
-                        </div>
-                        <div
-                          className="rounded-2xl p-4 border space-y-2.5"
-                          style={{
-                            borderColor: 'rgba(212,165,116,0.5)',
-                            background: 'linear-gradient(145deg, rgba(212,165,116,0.18), rgba(10,18,16,0.9))',
-                            boxShadow: '0 0 24px rgba(212,165,116,0.18), inset 0 1px 0 rgba(255,255,255,0.06)',
-                          }}
-                        >
-                          {result.yoga.map((asana, i) => (
-                            <div key={i} className="flex items-center gap-3">
-                              <span
-                                className="w-2 h-2 rounded-full flex-shrink-0"
-                                style={{ background: '#D4A574', boxShadow: '0 0 10px #D4A574' }}
-                              />
-                              <span className="text-[12px] text-cream-light/90 font-light">{asana}</span>
-                            </div>
+                {/* Back / Next Nav */}
+                <div className="flex items-center justify-between pt-3 border-t border-stone-800">
+                  <button
+                    onClick={handlePreviousQuestion}
+                    className="px-4 py-2 rounded-lg bg-stone-800/80 hover:bg-stone-700 text-xs text-stone-300"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleNextQuestion}
+                    className="px-5 py-2 rounded-lg bg-[#0f4d2c] hover:bg-[#145a34] border border-[#b07f24]/50 text-xs text-white font-medium shadow-md"
+                  >
+                    {currentQuestionIndex === activeQuestions.length - 1 ? 'Evaluate Assessment' : 'Continue →'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4: EVALUATING SPINNER */}
+            {step === 'evaluating' && (
+              <div className="py-16 text-center space-y-4">
+                <div className="w-12 h-12 border-3 border-[#b07f24] border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <h4 className="text-sm font-serif text-[#f6f2e7]">Synthesizing Ayurvedic Assessment...</h4>
+                <p className="text-xs text-stone-400">Reviewing clinical safety thresholds and dosha metrics.</p>
+              </div>
+            )}
+
+            {/* STEP 5: RESULTS DISPLAY */}
+            {step === 'result' && assessmentResult && (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                
+                {/* 5A. UNDER-18 MINOR RESTRICTION SCREEN */}
+                {assessmentResult.triage_category === 'MINOR_RESTRICTION' && (
+                  <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-600/40 space-y-3">
+                    <div className="flex items-center space-x-2 text-amber-400">
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <h4 className="text-xs font-bold uppercase tracking-wider">{assessmentResult.title}</h4>
+                    </div>
+                    <p className="text-xs text-amber-100/90 leading-relaxed">
+                      {assessmentResult.message}
+                    </p>
+                    <div className="p-3 rounded-lg bg-black/40 border border-amber-500/20 text-xs text-stone-300">
+                      <p className="font-semibold text-amber-300 mb-1">Recommended Guardian Steps:</p>
+                      <p>{assessmentResult.action_required}</p>
+                    </div>
+                    <p className="text-[11px] text-amber-200/70 italic">
+                      {assessmentResult.guardian_note}
+                    </p>
+                  </div>
+                )}
+
+                {/* 5B. EMERGENCY STOP SCREEN */}
+                {assessmentResult.triage_category === 'EMERGENCY_STOP' && (
+                  <div className="p-4 rounded-xl bg-rose-950/50 border border-rose-500/50 space-y-3">
+                    <div className="flex items-center space-x-2 text-rose-400">
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 5.636a9 9 0 11-12.728 0 9 9 0 0112.728 0zM12 9v4m0 4h.01" />
+                      </svg>
+                      <h4 className="text-xs font-bold uppercase tracking-wider">{assessmentResult.title}</h4>
+                    </div>
+                    <p className="text-xs text-rose-200 leading-relaxed">
+                      {assessmentResult.message}
+                    </p>
+                    <div className="p-3 rounded-lg bg-black/40 border border-rose-500/30 text-xs font-semibold text-rose-300">
+                      {assessmentResult.action_required}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5C. MEDICAL CLEARANCE REQUIRED (PREGNANCY/CHRONIC) */}
+                {assessmentResult.triage_category === 'MEDICAL_CLEARANCE_REQUIRED' && (
+                  <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-3">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">{assessmentResult.title}</h4>
+                    <p className="text-xs text-stone-300 leading-relaxed">{assessmentResult.message}</p>
+                    <div className="p-3 rounded-lg bg-black/40 border border-amber-500/20 text-xs text-stone-300">
+                      {assessmentResult.action_required}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5D. CLEARED DETERMINISTIC RESULTS (NO PRODUCT PUSHING) */}
+                {assessmentResult.safe && (
+                  <div className="space-y-4">
+                    <div className="border-b border-[#b07f24]/20 pb-2">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-[#b07f24]">Clinical Assessment Summary</span>
+                      <h4 className="text-sm font-serif text-[#f6f2e7]">{assessmentResult.title}</h4>
+                    </div>
+
+                    {/* Food suggestions */}
+                    <div className="p-3.5 rounded-xl bg-[#0f2c1e]/60 border border-[#b07f24]/30 space-y-2">
+                      <div className="flex items-center space-x-2 text-[#b07f24]">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                        </svg>
+                        <h5 className="text-xs font-semibold uppercase tracking-wider">Beneficial Dietary Habits</h5>
+                      </div>
+                      <p className="text-xs text-stone-300">{assessmentResult.foods.general_guideline}</p>
+                      
+                      <div className="pt-1">
+                        <span className="text-[11px] font-semibold text-emerald-400">Recommended Additions:</span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {assessmentResult.foods.beneficial.map((f, i) => (
+                            <span key={i} className="px-2 py-0.5 rounded-md bg-[#0a3520] border border-emerald-500/30 text-[11px] text-stone-200">
+                              ✓ {f}
+                            </span>
                           ))}
                         </div>
                       </div>
 
-                      {/* PHASE 3 — Diet (Terracotta Neon Card) */}
-                      <div className="nw-result-card" style={{ animationDelay: '0.3s' }}>
-                        <div className="flex items-center gap-2 mb-2.5">
-                          <span className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-black text-white"
-                            style={{ background: 'linear-gradient(135deg,#C76B4F,#a8553f)', boxShadow: '0 0 14px rgba(199,107,79,0.7)' }}
-                          >03</span>
-                          <span className="text-[9px] font-bold uppercase tracking-[0.22em] text-terracotta">
-                            Therapeutic Diet Matrix
-                          </span>
-                        </div>
-                        <div
-                          className="rounded-2xl p-4 border"
-                          style={{
-                            borderColor: 'rgba(199,107,79,0.5)',
-                            background: 'linear-gradient(145deg, rgba(199,107,79,0.2), rgba(10,18,16,0.9))',
-                            boxShadow: '0 0 24px rgba(199,107,79,0.18), inset 0 1px 0 rgba(255,255,255,0.06)',
-                          }}
-                        >
-                          <p className="text-[12px] text-cream-light/90 font-light leading-relaxed">
-                            {result.diet}
-                          </p>
+                      <div className="pt-1">
+                        <span className="text-[11px] font-semibold text-rose-400">Mindful Reductions:</span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {assessmentResult.foods.limit.map((f, i) => (
+                            <span key={i} className="px-2 py-0.5 rounded-md bg-rose-950/40 border border-rose-500/30 text-[11px] text-stone-300">
+                              ✕ {f}
+                            </span>
+                          ))}
                         </div>
                       </div>
-
-                      <button
-                        onClick={resetTerminal}
-                        className="w-full py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 border border-white/15 hover:border-white/30 hover:text-white hover:bg-white/5 transition-all"
-                      >
-                        Run New Diagnostics
-                      </button>
                     </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* ========== MINIMIZED MULTI-NEON PULSE ORB ========== */}
-          {isMinimized && (
+                    {/* Exactly 2 Safe Yoga Practices */}
+                    <div className="p-3.5 rounded-xl bg-[#0f2c1e]/60 border border-[#b07f24]/30 space-y-2">
+                      <div className="flex items-center space-x-2 text-[#b07f24]">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <h5 className="text-xs font-semibold uppercase tracking-wider">Reviewed Yogic Practices (2 Selected)</h5>
+                      </div>
+
+                      <div className="space-y-2 pt-1">
+                        {assessmentResult.yoga.practices.map((y, idx) => (
+                          <div key={idx} className="p-2.5 rounded-lg bg-[#07130e] border border-stone-800 space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-semibold text-amber-200">{idx + 1}. {y.name}</span>
+                              <span className="text-[10px] text-stone-400 font-mono">{y.duration}</span>
+                            </div>
+                            <p className="text-[11px] text-stone-300">{y.guidance}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <p className="text-[10px] text-amber-300/80 italic pt-1">
+                        Caution: {assessmentResult.yoga.caution}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Telecaller Lead Confirmation Note */}
+                <div className="p-3 rounded-lg bg-[#07130e] border border-stone-800 text-[11px] text-stone-400 text-center">
+                  {saveSuccess
+                    ? '✓ Your responses have been safely archived for our certified wellness tele-advisor.'
+                    : 'Assessment completed locally.'}
+                </div>
+
+                {/* Reset / New Assessment */}
+                <button
+                  onClick={handleReset}
+                  className="w-full py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-xs text-stone-300 transition-colors font-medium"
+                >
+                  Start New Assessment
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* FOOTER CLOSE BAR */}
+          <div className="px-4 py-2.5 bg-[#06110c] border-t border-stone-800/80 flex items-center justify-between text-[11px] text-stone-500">
+            <span>Nutriwell Holistic Tele-Triage</span>
             <button
-              onClick={() => setIsMinimized(false)}
-              className="relative w-[72px] h-[72px] flex items-center justify-center group"
-              aria-label="Open Vaidya AI"
+              onClick={() => setIsOpen(false)}
+              className="text-[#b07f24] hover:underline"
             >
-              {/* Pulse ring 1 */}
-              <span className="absolute inset-0 rounded-full nw-orb-pulse-1 opacity-70" />
-              {/* Pulse ring 2 */}
-              <span className="absolute inset-0 rounded-full nw-orb-pulse-2 opacity-50" />
-              {/* Spinning multicolor ring */}
-              <span className="absolute inset-0 rounded-full nw-orb-ring blur-[1px]" />
-              <span className="absolute inset-[3px] rounded-full bg-[#0A1210]" />
-              {/* Soft outer glow */}
-              <span
-                className="absolute inset-[-6px] rounded-full opacity-80 nw-orb-core-glow pointer-events-none"
-                style={{
-                  background: 'conic-gradient(from 0deg, #2A7A6E88, #D4A57488, #C76B4F88, #3E9B8D88, #2A7A6E88)',
-                  filter: 'blur(10px)',
-                }}
-              />
-              {/* Core icon */}
-              <span className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center"
-                style={{
-                  background: 'linear-gradient(145deg, #1E5C52, #0A1210)',
-                  boxShadow: 'inset 0 0 12px rgba(62,155,141,0.4)',
-                }}
-              >
-                <svg className="w-5 h-5 text-cream-light drop-shadow-[0_0_6px_rgba(255,255,255,0.8)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                </svg>
-              </span>
-              {/* Live badge */}
-              <span className="absolute -top-0.5 -right-0.5 z-20 flex h-4 w-4">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber opacity-75" />
-                <span className="relative inline-flex rounded-full h-4 w-4 bg-gradient-to-br from-amber to-terracotta border-2 border-[#0A1210]" />
-              </span>
+              Minimize Widget
             </button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
