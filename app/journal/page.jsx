@@ -1,8 +1,6 @@
 "use client";
 import React, { useState } from 'react';
-import { Search, BookOpen, Clock, ArrowRight, X } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
-import Footer from '@/components/layout/Footer';
+import { Search, Clock, ArrowRight, X } from 'lucide-react';
 
 const ARTICLES = [
   {
@@ -29,87 +27,83 @@ export default function JournalPage() {
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  return (
-    <div className="min-h-screen bg-[#fdfcf8]">
-      <Navbar />
-      
-      <main className="pt-32 pb-20">
-        <div className="max-w-7xl mx-auto px-6">
-          <header className="text-center mb-16">
-            <span className="text-[#b07f24] font-medium tracking-[0.2em] uppercase text-sm block mb-4">The Ayurvedic Chronicle</span>
-            <h1 className="text-5xl md:text-6xl font-serif text-[#0f4d2c] mb-8">Journal of Life</h1>
-            
-            <div className="max-w-xl mx-auto relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#0f4d2c]/40 w-5 h-5" />
-              <input 
-                type="text" 
-                placeholder="Search traditions, science, or rituals..."
-                className="w-full pl-12 pr-6 py-4 bg-white border border-[#0f4d2c]/10 rounded-full focus:outline-none focus:border-[#b07f24] text-[#0f4d2c]"
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </header>
+  const filteredArticles = ARTICLES.filter(art => 
+    art.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    art.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-            {ARTICLES.map((article) => (
-              <article 
-                key={article.id}
-                className="group cursor-pointer bg-[#f6f2e7] rounded-2xl overflow-hidden hover:shadow-xl transition-all duration-500"
-                onClick={() => setSelectedArticle(article)}
-              >
-                <div className="aspect-[16/9] relative overflow-hidden">
-                  <img 
-                    src={article.image} 
-                    alt={article.title}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  />
-                  <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-1 rounded-full">
-                    <span className="text-xs font-bold text-[#0f4d2c] tracking-widest uppercase">{article.category}</span>
-                  </div>
-                </div>
-                <div className="p-8">
-                  <div className="flex items-center gap-4 mb-4 text-[#0f4d2c]/60 text-sm">
-                    <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {article.readTime}</span>
-                  </div>
-                  <h3 className="text-2xl font-serif text-[#0f4d2c] mb-4 group-hover:text-[#b07f24] transition-colors">
-                    {article.title}
-                  </h3>
-                  <p className="text-[#14251b]/70 leading-relaxed mb-6">{article.excerpt}</p>
-                  <button className="flex items-center gap-2 text-[#0f4d2c] font-bold uppercase tracking-wider text-xs">
-                    Read Article <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-2" />
-                  </button>
-                </div>
-              </article>
-            ))}
+  return (
+    <div className="min-h-screen bg-[#fdfcf8] py-16">
+      <div className="max-w-7xl mx-auto px-6">
+        <header className="text-center mb-16">
+          <span className="text-[#b07f24] font-medium tracking-[0.2em] uppercase text-xs block mb-3">The Ayurvedic Chronicle</span>
+          <h1 className="text-4xl md:text-5xl font-serif text-[#0f4d2c] mb-6">Journal of Life</h1>
+          
+          <div className="max-w-lg mx-auto relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#0f4d2c]/40 w-4 h-4" />
+            <input 
+              type="text" 
+              placeholder="Search traditions, science, or rituals..."
+              className="w-full pl-11 pr-5 py-3 bg-white border border-[#0f4d2c]/10 rounded-full focus:outline-none focus:border-[#b07f24] text-sm text-[#0f4d2c]"
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
+        </header>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          {filteredArticles.map((article) => (
+            <article 
+              key={article.id}
+              className="group cursor-pointer bg-[#f6f2e7] rounded-2xl overflow-hidden hover:shadow-xl transition-all duration-500"
+              onClick={() => setSelectedArticle(article)}
+            >
+              <div className="aspect-[16/9] relative overflow-hidden">
+                <img 
+                  src={article.image} 
+                  alt={article.title}
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                />
+                <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-full">
+                  <span className="text-[10px] font-bold text-[#0f4d2c] tracking-widest uppercase">{article.category}</span>
+                </div>
+              </div>
+              <div className="p-8">
+                <div className="flex items-center gap-4 mb-3 text-[#0f4d2c]/60 text-xs">
+                  <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {article.readTime}</span>
+                </div>
+                <h3 className="text-2xl font-serif text-[#0f4d2c] mb-3 group-hover:text-[#b07f24] transition-colors">
+                  {article.title}
+                </h3>
+                <p className="text-[#14251b]/70 leading-relaxed text-sm mb-6">{article.excerpt}</p>
+                <span className="inline-flex items-center gap-2 text-[#0f4d2c] font-bold uppercase tracking-wider text-xs">
+                  Read Article <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                </span>
+              </div>
+            </article>
+          ))}
         </div>
-      </main>
+      </div>
 
       {/* Article Modal */}
       {selectedArticle && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-[#0a1813]/90 backdrop-blur-sm" onClick={() => setSelectedArticle(null)} />
-          <div className="relative bg-[#fdfcf8] w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl">
+          <div className="absolute inset-0 bg-[#0a1813]/80 backdrop-blur-sm" onClick={() => setSelectedArticle(null)} />
+          <div className="relative bg-[#fdfcf8] w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-8 md:p-10">
             <button 
               onClick={() => setSelectedArticle(null)}
               className="absolute top-6 right-6 p-2 hover:bg-[#f6f2e7] rounded-full transition-colors"
             >
-              <X className="w-6 h-6 text-[#0f4d2c]" />
+              <X className="w-5 h-5 text-[#0f4d2c]" />
             </button>
-            <div className="p-8 md:p-12">
-              <span className="text-[#b07f24] font-bold uppercase tracking-widest text-sm">{selectedArticle.category}</span>
-              <h2 className="text-4xl font-serif text-[#0f4d2c] mt-4 mb-8">{selectedArticle.title}</h2>
-              <img src={selectedArticle.image} className="w-full aspect-video object-cover rounded-xl mb-10" alt="" />
-              <div className="prose prose-lg text-[#14251b]/80 max-w-none">
-                {selectedArticle.content}
-                <p className="mt-6 italic">Full article exploration continues in our upcoming volume...</p>
-              </div>
+            <span className="text-[#b07f24] font-bold uppercase tracking-widest text-xs">{selectedArticle.category}</span>
+            <h2 className="text-3xl font-serif text-[#0f4d2c] mt-2 mb-6">{selectedArticle.title}</h2>
+            <img src={selectedArticle.image} className="w-full aspect-video object-cover rounded-xl mb-6" alt="" />
+            <div className="text-[#14251b]/80 text-sm leading-relaxed space-y-4">
+              <p>{selectedArticle.content}</p>
             </div>
           </div>
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }

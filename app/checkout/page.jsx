@@ -1,521 +1,233 @@
-'use client'
-
-import { useState, useEffect } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
-import { useCart } from '@/lib/cartContext'
+"use client";
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { ShieldCheck, ArrowRight, Loader2, ShoppingBag, CheckCircle2 } from 'lucide-react';
+import { useCart } from '@/lib/cartContext';
+import { useAuth } from '@/lib/auth';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function CheckoutPage() {
-  const router = useRouter()
-  const { cart, cartTotal, clearCart, updateQuantity, removeFromCart } = useCart()
+  const router = useRouter();
+  const { cart = [], cartItems = [], cartTotal = 0, clearCart, appliedCoupon } = useCart();
+  const { user } = useAuth();
+
+  const [mounted, setMounted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
-    fullName: '',
+    name: '',
     email: '',
     phone: '',
     address: '',
-    pincode: '',
     city: '',
     state: '',
-    gstin: '',
-    notes: ''
-  })
+    pincode: '',
+    paymentMethod: 'cod', // Cash on Delivery default
+  });
 
-  // Coupon State
-  const [couponCode, setCouponCode] = useState('')
-  const [appliedCoupon, setAppliedCoupon] = useState(null)
-  const [couponErr, setCouponErr] = useState('')
-
-  // Payment Method State
-  const [paymentMethod, setPaymentMethod] = useState('upi') // upi, cod, card
-  const [isPlacingOrder, setIsPlacingOrder] = useState(false)
-  const [orderSuccess, setOrderSuccess] = useState(null)
-
-  // Calculations
-  const shippingThreshold = 999
-  const baseShippingFee = 99
-  const shippingFee = cartTotal >= shippingThreshold || cart.length === 0 ? 0 : baseShippingFee
-
-  let discountAmount = 0
-  if (appliedCoupon) {
-    discountAmount = Math.round((cartTotal * appliedCoupon.percentage) / 100)
-  }
-
-  const finalTotal = Math.max(0, cartTotal - discountAmount + shippingFee)
-
-  // Pincode lookup simulator
   useEffect(() => {
-    if (formData.pincode.length === 6 && !isNaN(formData.pincode)) {
-      const pin = formData.pincode
-      if (pin.startsWith('700') || pin.startsWith('711')) {
-        setFormData(prev => ({ ...prev, city: 'Kolkata', state: 'West Bengal' }))
-      } else if (pin.startsWith('110')) {
-        setFormData(prev => ({ ...prev, city: 'New Delhi', state: 'Delhi' }))
-      } else if (pin.startsWith('400')) {
-        setFormData(prev => ({ ...prev, city: 'Mumbai', state: 'Maharashtra' }))
-      } else if (pin.startsWith('560')) {
-        setFormData(prev => ({ ...prev, city: 'Bengaluru', state: 'Karnataka' }))
-      } else {
-        setFormData(prev => ({ ...prev, city: 'Metropolitan City', state: 'State Region' }))
-      }
+    setMounted(true);
+    if (user) {
+      setFormData(prev => ({
+        ...prev,
+        email: user.email || '',
+        name: user.displayName || '',
+      }));
     }
-  }, [formData.pincode])
+  }, [user]);
 
-  const handleCouponApply = (e) => {
-    e.preventDefault()
-    setCouponErr('')
-    const code = couponCode.trim().toUpperCase()
-
-    if (code === 'ROYAL20') {
-      setAppliedCoupon({ code: 'ROYAL20', percentage: 20 })
-      setCouponCode('')
-    } else if (code === 'HARVEST10') {
-      setAppliedCoupon({ code: 'HARVEST10', percentage: 10 })
-      setCouponCode('')
-    } else {
-      setCouponErr('Invalid promo coupon. Try "ROYAL20" for 20% off.')
-    }
+  // Unified items check (cart or cartItems)
+  const items = cartItems?.length ? cartItems : (cart || []);
+  const shippingThreshold = 999;
+  const baseShippingFee = 99;
+  
+  // Safe computation with fallback checks
+  const shippingFee = (cartTotal >= shippingThreshold || (items?.length || 0) === 0) ? 0 : baseShippingFee;
+  
+  let discountAmount = 0;
+  if (appliedCoupon && appliedCoupon.discount) {
+    discountAmount = Math.round((cartTotal * appliedCoupon.discount) / 100);
   }
+  const finalTotal = Math.max(0, cartTotal - discountAmount + shippingFee);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
 
   const handlePlaceOrder = async (e) => {
-    e.preventDefault()
-    if (cart.length === 0) return
+    e.preventDefault();
+    if (items.length === 0) return;
+    setSubmitting(true);
 
-    if (!formData.fullName || !formData.phone || !formData.address || !formData.pincode) {
-      alert('Please fill out all required shipping fields.')
-      return
-    }
-
-    setIsPlacingOrder(true)
     try {
-      const orderNumber = `NWO-${Math.floor(100000 + Math.random() * 900000)}`
-      
-      const orderData = {
-        orderNumber,
-        customerName: formData.fullName,
-        customerEmail: formData.email,
-        customerPhone: formData.phone,
-        shippingAddress: {
-          address: formData.address,
-          city: formData.city,
-          state: formData.state,
-          pincode: formData.pincode,
-          gstin: formData.gstin || null
-        },
-        items: cart.map(item => ({
-          id: item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-          image: item.image || item.images?.[0] || '/images/Sacred Botanicals.png'
+      const orderPayload = {
+        userId: user?.uid || 'guest',
+        customer: formData,
+        items: items.map(item => ({
+          id: item.id || '',
+          name: item.name || '',
+          price: Number(item.price) || 0,
+          quantity: item.quantity || 1,
         })),
         subtotal: cartTotal,
         discount: discountAmount,
-        couponUsed: appliedCoupon?.code || null,
-        shippingFee,
-        totalAmount: finalTotal,
-        paymentMethod,
-        paymentStatus: paymentMethod === 'cod' ? 'pending' : 'paid',
-        orderStatus: 'pending',
-        awbNumber: '',
-        courierPartner: '',
-        notes: formData.notes,
-        createdAt: serverTimestamp()
-      }
+        shippingFee: shippingFee,
+        total: finalTotal,
+        paymentMethod: formData.paymentMethod,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      };
 
-      const docRef = await addDoc(collection(db, 'orders'), orderData)
-
-      setOrderSuccess({
-        orderId: docRef.id,
-        orderNumber,
-        totalAmount: finalTotal,
-        itemsCount: cart.length
-      })
-
-      clearCart()
+      const docRef = await addDoc(collection(db, 'orders'), orderPayload);
+      clearCart();
+      router.push(`/checkout/success?orderId=${docRef.id}`);
     } catch (err) {
-      console.error('Order Placement Error:', err)
-      alert('Failed to place order. Please check your internet connection.')
+      console.error("Order creation error:", err);
+      alert("Unable to process order. Please try again.");
     } finally {
-      setIsPlacingOrder(false)
+      setSubmitting(false);
     }
+  };
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-[#fdfcf8] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-[#0f4d2c] animate-spin" />
+      </div>
+    );
   }
 
-  /* ── ORDER SUCCESS RECEIPT STATE ── */
-  if (orderSuccess) {
+  if (items.length === 0) {
     return (
-      <main className="min-h-screen bg-[var(--paper)] pt-28 pb-20 px-4">
-        <div className="max-w-2xl mx-auto bg-[var(--cream)] border border-[var(--gold)]/30 rounded-[2.5rem] p-8 md:p-12 text-center shadow-2xl space-y-6">
-          <div className="w-20 h-20 bg-[var(--forest)] text-white rounded-full flex items-center justify-center mx-auto shadow-lg text-3xl">
-            ✓
-          </div>
-
-          <div className="space-y-2">
-            <span className="font-sans text-xs uppercase tracking-[0.3em] text-[var(--gold)] font-bold">
-              Order Confirmed & Placed
-            </span>
-            <h1 className="font-display text-3xl md:text-4xl text-[var(--ink)] italic">
-              Thank You for Choosing Nutriwell
-            </h1>
-            <p className="font-sans text-xs text-[var(--muted)]">
-              Order Reference Number: <strong className="text-[var(--forest)] font-mono">{orderSuccess.orderNumber}</strong>
-            </p>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-white border border-[var(--line)] space-y-3 text-left">
-            <div className="flex justify-between text-xs font-sans">
-              <span className="text-[var(--muted)]">Items Count:</span>
-              <span className="font-bold text-[var(--ink)]">{orderSuccess.itemsCount} Remedies</span>
-            </div>
-            <div className="flex justify-between text-xs font-sans">
-              <span className="text-[var(--muted)]">Total Paid:</span>
-              <span className="font-bold text-[var(--forest)]">₹{orderSuccess.totalAmount}</span>
-            </div>
-            <div className="flex justify-between text-xs font-sans">
-              <span className="text-[var(--muted)]">Estimated Delivery:</span>
-              <span className="font-semibold text-emerald-700">3-5 Business Days</span>
-            </div>
-          </div>
-
-          <p className="font-sans text-xs text-[var(--muted)] leading-relaxed italic">
-            A confirmation receipt and courier tracking details will be dispatched to your phone via SMS.
-          </p>
-
-          <div className="pt-4 flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/shop"
-              className="px-8 py-3.5 bg-[var(--forest)] text-white font-sans text-xs font-bold uppercase tracking-widest rounded-full hover:bg-[var(--forest-deep)] transition-colors"
-            >
-              Continue Exploring Shop
-            </Link>
-          </div>
-        </div>
-      </main>
-    )
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-6 text-center bg-[#fdfcf8]">
+        <ShoppingBag className="w-16 h-16 text-[#0f4d2c]/30 mb-4" />
+        <h1 className="text-3xl font-serif text-[#0f4d2c] mb-2">Your Apothecary Bag is Empty</h1>
+        <p className="text-sm text-[#14251b]/60 mb-6">Explore our wildcrafted Vedic formulations to continue.</p>
+        <Link href="/shop" className="bg-[#0f4d2c] text-white px-8 py-3.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#0a3520] transition-all">
+          Explore Formulations
+        </Link>
+      </div>
+    );
   }
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] pt-24 pb-24">
-      <div className="max-w-7xl mx-auto px-4 md:px-8">
-        
-        {/* Header Breadcrumb */}
-        <div className="mb-8">
-          <nav className="flex items-center gap-2 font-sans text-[11px] text-[var(--muted)] tracking-wide mb-2">
-            <Link href="/" className="hover:text-[var(--forest)]">Home</Link>
-            <span>/</span>
-            <Link href="/shop" className="hover:text-[var(--forest)]">Shop</Link>
-            <span>/</span>
-            <span className="text-[var(--ink)] font-semibold">Express Checkout</span>
-          </nav>
-          <h1 className="font-display text-3xl md:text-4xl text-[var(--ink)] italic">
-            Sacred Remedy <span className="text-[var(--gold)]">Checkout</span>
-          </h1>
+    <div className="min-h-screen bg-[#fdfcf8] py-16 px-6">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-12">
+          <span className="text-[#b07f24] text-[10px] tracking-[0.3em] uppercase font-bold block mb-2">Sacred Delivery</span>
+          <h1 className="text-4xl font-serif text-[#0f4d2c]">Checkout & Dispatch</h1>
         </div>
 
-        {cart.length === 0 ? (
-          <div className="bg-[var(--cream)] rounded-3xl p-12 text-center space-y-5 border border-[var(--line)]">
-            <p className="font-display text-2xl text-[var(--ink)] italic">Your Sacred Cart is Empty</p>
-            <p className="font-sans text-xs text-[var(--muted)]">Add remedies to your cart to proceed with checkout.</p>
-            <Link
-              href="/shop"
-              className="inline-block px-8 py-3.5 bg-[var(--forest)] text-white font-sans text-xs font-bold uppercase tracking-widest rounded-full hover:bg-[var(--forest-deep)] transition-colors"
-            >
-              Return to Apothecary
-            </Link>
-          </div>
-        ) : (
-          <div className="grid lg:grid-cols-12 gap-8 lg:gap-12 items-start">
-            
-            {/* LEFT 7 COLS: SHIPPING & PAYMENT FORM */}
-            <form onSubmit={handlePlaceOrder} className="lg:col-span-7 space-y-8">
-              
-              {/* Shipping Address Box */}
-              <div className="p-6 md:p-8 rounded-3xl bg-[var(--cream)]/60 border border-[var(--line)] space-y-5">
-                <div className="flex items-center justify-between border-b border-[var(--line)] pb-4">
-                  <h2 className="font-display text-xl text-[var(--ink)] italic flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-[var(--forest)] text-white text-xs font-sans flex items-center justify-center not-italic font-bold">1</span>
-                    Shipping Destination
-                  </h2>
-                  <span className="font-sans text-[10px] text-[var(--gold)] uppercase tracking-widest font-bold">India Delivery Only</span>
-                </div>
+        <form onSubmit={handlePlaceOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+          
+          {/* Shipping Form */}
+          <div className="lg:col-span-7 bg-white p-8 md:p-10 rounded-3xl border border-[#0f4d2c]/10 shadow-sm space-y-6">
+            <h2 className="text-xl font-serif text-[#0f4d2c] border-b border-[#0f4d2c]/10 pb-4">Recipient Information</h2>
 
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">Full Name *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Vikramaditya Sen"
-                      value={formData.fullName}
-                      onChange={e => setFormData({ ...formData, fullName: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">Mobile Number (For SMS Tracking) *</label>
-                    <input
-                      type="tel"
-                      required
-                      maxLength={10}
-                      placeholder="9876543210"
-                      value={formData.phone}
-                      onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">Email Address</label>
-                    <input
-                      type="email"
-                      placeholder="vikram@domain.com"
-                      value={formData.email}
-                      onChange={e => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">Street Address / House No. *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Flat 4B, Emerald Court, Park Street"
-                      value={formData.address}
-                      onChange={e => setFormData({ ...formData, address: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">Pincode *</label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={6}
-                      placeholder="700016"
-                      value={formData.pincode}
-                      onChange={e => setFormData({ ...formData, pincode: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">City</label>
-                    <input
-                      type="text"
-                      readOnly
-                      placeholder="Auto Lookup"
-                      value={formData.city}
-                      className="w-full px-4 py-3 rounded-xl bg-[var(--cream)] border border-[var(--line)] text-xs text-[var(--muted)] font-medium"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block font-sans text-xs font-semibold text-[var(--ink)] mb-1">GSTIN (Optional for Tax Invoice)</label>
-                    <input
-                      type="text"
-                      placeholder="19AAACN1234F1Z5"
-                      value={formData.gstin}
-                      onChange={e => setFormData({ ...formData, gstin: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-white border border-[var(--line)] text-xs font-mono text-[var(--ink)] focus:outline-none focus:border-[var(--forest)]"
-                    />
-                  </div>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">Full Name</label>
+                <input required type="text" name="name" value={formData.name} onChange={handleInputChange} placeholder="Aarav Sharma" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
               </div>
-
-              {/* Payment Method Selection Box */}
-              <div className="p-6 md:p-8 rounded-3xl bg-[var(--cream)]/60 border border-[var(--line)] space-y-5">
-                <div className="border-b border-[var(--line)] pb-4">
-                  <h2 className="font-display text-xl text-[var(--ink)] italic flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-[var(--forest)] text-white text-xs font-sans flex items-center justify-center not-italic font-bold">2</span>
-                    Select Payment Gateway
-                  </h2>
-                </div>
-
-                <div className="space-y-3">
-                  {/* UPI */}
-                  <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${
-                    paymentMethod === 'upi' ? 'bg-white border-[var(--forest)] ring-2 ring-[var(--forest)]/20' : 'bg-white/50 border-[var(--line)]'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="payment"
-                        checked={paymentMethod === 'upi'}
-                        onChange={() => setPaymentMethod('upi')}
-                        className="accent-[var(--forest)]"
-                      />
-                      <div>
-                        <p className="font-sans text-xs font-bold text-[var(--ink)]">Instant UPI / QR Code</p>
-                        <p className="font-sans text-[10px] text-[var(--muted)]">Google Pay, PhonePe, Paytm, BHIM</p>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-emerald-100 text-emerald-800 font-sans font-bold px-2.5 py-1 rounded-full">Zero Fee</span>
-                  </label>
-
-                  {/* COD */}
-                  <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${
-                    paymentMethod === 'cod' ? 'bg-white border-[var(--forest)] ring-2 ring-[var(--forest)]/20' : 'bg-white/50 border-[var(--line)]'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="payment"
-                        checked={paymentMethod === 'cod'}
-                        onChange={() => setPaymentMethod('cod')}
-                        className="accent-[var(--forest)]"
-                      />
-                      <div>
-                        <p className="font-sans text-xs font-bold text-[var(--ink)]">Cash on Delivery (COD)</p>
-                        <p className="font-sans text-[10px] text-[var(--muted)]">Pay cash or scan QR when doorstep delivered</p>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-amber-100 text-amber-900 font-sans font-bold px-2.5 py-1 rounded-full">Available</span>
-                  </label>
-
-                  {/* Cards */}
-                  <label className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer transition-all ${
-                    paymentMethod === 'card' ? 'bg-white border-[var(--forest)] ring-2 ring-[var(--forest)]/20' : 'bg-white/50 border-[var(--line)]'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="payment"
-                        checked={paymentMethod === 'card'}
-                        onChange={() => setPaymentMethod('card')}
-                        className="accent-[var(--forest)]"
-                      />
-                      <div>
-                        <p className="font-sans text-xs font-bold text-[var(--ink)]">Credit / Debit Cards & NetBanking</p>
-                        <p className="font-sans text-[10px] text-[var(--muted)]">Visa, Mastercard, RuPay, HDFC, ICICI</p>
-                      </div>
-                    </div>
-                  </label>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isPlacingOrder}
-                  className="w-full py-4 bg-[var(--forest)] text-white font-sans text-xs font-bold uppercase tracking-[0.2em] rounded-full hover:bg-[var(--forest-deep)] transition-all shadow-xl disabled:opacity-50"
-                >
-                  {isPlacingOrder ? 'Processing Order...' : `Confirm & Place Order (₹${finalTotal})`}
-                </button>
-              </div>
-
-            </form>
-
-            {/* RIGHT 5 COLS: ORDER SUMMARY */}
-            <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-28">
-              <div className="p-6 md:p-8 rounded-3xl bg-[var(--cream)] border border-[var(--gold)]/30 space-y-6 shadow-sm">
-                <h3 className="font-display text-xl text-[var(--ink)] italic border-b border-[var(--line)] pb-3">
-                  Sacred Order Summary
-                </h3>
-
-                {/* Items list */}
-                <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
-                  {cart.map(item => (
-                    <div key={item.id} className="flex items-center gap-3 bg-white p-3 rounded-2xl border border-[var(--line)]">
-                      <img
-                        src={item.image || item.images?.[0] || '/images/Sacred Botanicals.png'}
-                        alt={item.name}
-                        className="w-14 h-16 object-cover rounded-xl bg-[var(--cream)]"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-display text-sm text-[var(--ink)] truncate">{item.name}</h4>
-                        <p className="font-sans text-[11px] text-[var(--muted)]">Qty: {item.quantity}</p>
-                        <p className="font-sans text-xs font-bold text-[var(--forest)]">₹{item.price * item.quantity}</p>
-                      </div>
-                      <button
-                        onClick={() => removeFromCart(item.id)}
-                        className="text-xs text-[var(--muted)] hover:text-red-500 px-2"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Coupon Box */}
-                <form onSubmit={handleCouponApply} className="space-y-2 pt-2 border-t border-[var(--line)]">
-                  <label className="block font-sans text-[10px] uppercase tracking-widest text-[var(--gold)] font-bold">
-                    Have a Harvest Promo Code?
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="e.g. ROYAL20"
-                      value={couponCode}
-                      onChange={e => setCouponCode(e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-xl bg-white border border-[var(--line)] text-xs uppercase font-mono text-[var(--ink)] focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      className="px-4 py-2 bg-[var(--forest)] text-white font-sans text-xs font-bold uppercase rounded-xl hover:bg-[var(--forest-deep)] transition-colors"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                  {couponErr && <p className="font-sans text-[11px] text-red-500">{couponErr}</p>}
-                  {appliedCoupon && (
-                    <p className="font-sans text-[11px] text-emerald-700 font-bold flex items-center justify-between">
-                      <span>✓ Code {appliedCoupon.code} Applied ({appliedCoupon.percentage}% Off)</span>
-                      <button onClick={() => setAppliedCoupon(null)} className="text-red-500 underline ml-2">Remove</button>
-                    </p>
-                  )}
-                </form>
-
-                {/* Bill Breakdown */}
-                <div className="space-y-2.5 pt-4 border-t border-[var(--line)] font-sans text-xs">
-                  <div className="flex justify-between text-[var(--muted)]">
-                    <span>Subtotal</span>
-                    <span className="font-semibold text-[var(--ink)]">₹{cartTotal}</span>
-                  </div>
-
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between text-emerald-700 font-medium">
-                      <span>Promo Discount</span>
-                      <span>-₹{discountAmount}</span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between text-[var(--muted)]">
-                    <span>Royal Express Shipping</span>
-                    {shippingFee === 0 ? (
-                      <span className="text-emerald-700 font-bold uppercase">FREE</span>
-                    ) : (
-                      <span className="font-semibold text-[var(--ink)]">₹{shippingFee}</span>
-                    )}
-                  </div>
-
-                  {shippingFee > 0 && (
-                    <p className="text-[10px] text-[var(--gold)] italic">
-                      Add ₹{shippingThreshold - cartTotal} more remedies for Free Royal Delivery!
-                    </p>
-                  )}
-
-                  <div className="flex justify-between font-display text-xl text-[var(--ink)] font-bold pt-3 border-t border-[var(--line)]">
-                    <span>Grand Total</span>
-                    <span className="text-[var(--forest)]">₹{finalTotal}</span>
-                  </div>
-                </div>
-
-                {/* Trust Seal */}
-                <div className="p-3 rounded-xl bg-white/60 border border-[var(--line)] text-center font-sans text-[10px] uppercase tracking-wider text-[var(--muted)]">
-                  🔒 256-Bit Encrypted Ayurvedic Checkout
-                </div>
-
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">Email</label>
+                <input required type="email" name="email" value={formData.email} onChange={handleInputChange} placeholder="aarav@example.com" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
               </div>
             </div>
 
-          </div>
-        )}
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">Phone Number</label>
+              <input required type="tel" name="phone" value={formData.phone} onChange={handleInputChange} placeholder="+91 98765 43210" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
+            </div>
 
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">Shipping Address</label>
+              <textarea required rows="3" name="address" value={formData.address} onChange={handleInputChange} placeholder="House / Flat No., Landmark, Street" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">City</label>
+                <input required type="text" name="city" value={formData.city} onChange={handleInputChange} placeholder="Mumbai" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">State</label>
+                <input required type="text" name="state" value={formData.state} onChange={handleInputChange} placeholder="Maharashtra" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-1">PIN Code</label>
+                <input required type="text" name="pincode" value={formData.pincode} onChange={handleInputChange} placeholder="400001" className="w-full px-4 py-3 bg-[#fdfcf8] border border-[#0f4d2c]/15 rounded-xl text-sm focus:outline-none focus:border-[#b07f24]" />
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-[#0f4d2c]/10">
+              <span className="block text-xs uppercase tracking-wider text-[#0f4d2c] font-semibold mb-3">Payment Method</span>
+              <label className="flex items-center gap-3 p-4 border border-[#b07f24] bg-[#f6f2e7]/40 rounded-xl cursor-pointer">
+                <input type="radio" name="paymentMethod" value="cod" checked={formData.paymentMethod === 'cod'} onChange={handleInputChange} className="text-[#0f4d2c]" />
+                <span className="text-sm font-medium text-[#0f4d2c]">Cash on Delivery (COD) / Pay on Dispatch</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Order Summary */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="bg-[#f6f2e7] p-8 rounded-3xl border border-[#0f4d2c]/10">
+              <h2 className="text-xl font-serif text-[#0f4d2c] mb-6">Order Summary</h2>
+
+              <div className="space-y-4 max-h-60 overflow-y-auto mb-6 pr-2">
+                {items.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-sm border-b border-[#0f4d2c]/5 pb-3">
+                    <div>
+                      <p className="font-medium text-[#0f4d2c] line-clamp-1">{item.name}</p>
+                      <p className="text-xs text-[#14251b]/50">Qty: {item.quantity || 1}</p>
+                    </div>
+                    <span className="font-semibold text-[#0f4d2c]">₹{((Number(item.price) || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3 text-sm border-t border-[#0f4d2c]/10 pt-4">
+                <div className="flex justify-between text-[#14251b]/70">
+                  <span>Subtotal</span>
+                  <span>₹{cartTotal.toLocaleString()}</span>
+                </div>
+                {discountAmount > 0 && (
+                  <div className="flex justify-between text-[#b07f24]">
+                    <span>Voucher Discount</span>
+                    <span>-₹{discountAmount.toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-[#14251b]/70">
+                  <span>Vedic Dispatch</span>
+                  <span>{shippingFee === 0 ? <span className="text-emerald-700 font-semibold">FREE</span> : `₹${shippingFee}`}</span>
+                </div>
+                <div className="flex justify-between text-base font-serif font-bold text-[#0f4d2c] border-t border-[#0f4d2c]/10 pt-3">
+                  <span>Total Amount</span>
+                  <span>₹{finalTotal.toLocaleString()}</span>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full mt-8 bg-[#0f4d2c] hover:bg-[#0a3520] text-white py-4 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Confirm Order <ArrowRight className="w-4 h-4" /></>}
+              </button>
+
+              <div className="mt-6 flex items-center justify-center gap-2 text-[11px] text-[#14251b]/50">
+                <ShieldCheck className="w-4 h-4 text-[#b07f24]" />
+                <span>100% Ayurvedic Purity Guarantee</span>
+              </div>
+            </div>
+          </div>
+
+        </form>
       </div>
-    </main>
-  )
+    </div>
+  );
 }

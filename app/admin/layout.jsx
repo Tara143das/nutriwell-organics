@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useAuth } from '@/lib/auth'; // Strict compliance: Always use import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/auth';
 import { 
   LayoutDashboard, 
   Package, 
@@ -55,14 +55,16 @@ const ADMIN_NAV_ITEMS = [
 ];
 
 export default function AdminLayout({ children }) {
-  const { user, userDoc, loading, logout } = useAuth();
+  const { user, role, isAdmin, isStaff, loading, logout } = useAuth();
   const pathname = usePathname();
-  const router = Router = useRouter();
+  const router = useRouter(); // Fixed: Router typo resolved
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
+  const [mounted, setMounted] = useState(false);
 
-  // Live Digital Clock
+  // Live Digital Clock & Mount Check
   useEffect(() => {
+    setMounted(true);
     const updateTime = () => {
       const now = new Date();
       setCurrentTime(
@@ -81,18 +83,17 @@ export default function AdminLayout({ children }) {
 
   // Access Validation Guard
   useEffect(() => {
-    if (!loading) {
+    if (!loading && mounted) {
       if (!user) {
         router.push('/login?redirect=/admin/dashboard');
-      } else if (userDoc && !['admin', 'subadmin', 'sales', 'logistics'].includes(userDoc.role)) {
-        // User is logged in but has no staff privilege
+      } else if (!isAdmin && !isStaff && role !== 'admin') {
         router.push('/');
       }
     }
-  }, [user, userDoc, loading, router]);
+  }, [user, role, isAdmin, isStaff, loading, mounted, router]);
 
   // Loading State Indicator
-  if (loading || !userDoc) {
+  if (loading || !mounted) {
     return (
       <div className="min-h-screen bg-[#0a1813] text-[#fdfcf8] flex flex-col items-center justify-center p-4">
         <div className="w-16 h-16 rounded-full border-2 border-[#b07f24] border-t-transparent animate-spin mb-6" />
@@ -107,14 +108,17 @@ export default function AdminLayout({ children }) {
     );
   }
 
+  const staffRole = role || (isAdmin ? 'admin' : 'customer');
+  const staffEmployeeId = user?.uid ? `NWO-${user.uid.slice(0, 6).toUpperCase()}` : 'NWO-STAFF-ROOT';
+
   // Unauthorized Fallback Safety Screen
-  if (!['admin', 'subadmin', 'sales', 'logistics'].includes(userDoc.role)) {
+  if (!isAdmin && !isStaff && !['admin', 'subadmin', 'sales', 'logistics'].includes(staffRole)) {
     return (
       <div className="min-h-screen bg-[#0a1813] text-[#fdfcf8] flex flex-col items-center justify-center p-6 text-center">
         <ShieldAlert className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
         <h1 className="text-3xl font-serif text-[#fdfcf8]">Access Denied</h1>
         <p className="text-sm text-[#fdfcf8]/70 max-w-md mt-2 mb-6">
-          Your account ({user.email}) does not have active staff privileges for the Nutriwell Master Control Center.
+          Your account ({user?.email}) does not have active staff privileges for the Nutriwell Master Control Center.
         </p>
         <Link
           href="/"
@@ -125,9 +129,6 @@ export default function AdminLayout({ children }) {
       </div>
     );
   }
-
-  const staffRole = userDoc.role || 'customer';
-  const staffEmployeeId = userDoc.employeeId || 'NWO-STAFF-UNKNOWN';
 
   return (
     <div className="min-h-screen bg-[#0a1813] text-[#fdfcf8] flex overflow-hidden font-sans">
@@ -163,7 +164,7 @@ export default function AdminLayout({ children }) {
           </div>
           
           <h2 className="text-sm font-semibold text-[#fdfcf8] truncate">
-            {userDoc.displayName || user.email?.split('@')[0]}
+            {user?.displayName || user?.email?.split('@')[0]}
           </h2>
           
           <p className="text-[11px] font-mono text-[#b07f24] mt-0.5 tracking-wider">
@@ -176,7 +177,7 @@ export default function AdminLayout({ children }) {
           {ADMIN_NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-            const isAllowed = item.allowedRoles.includes(staffRole);
+            const isAllowed = item.allowedRoles.includes(staffRole) || isAdmin;
 
             if (!isAllowed) return null;
 
@@ -292,7 +293,7 @@ export default function AdminLayout({ children }) {
                 {ADMIN_NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.href;
-                  if (!item.allowedRoles.includes(staffRole)) return null;
+                  if (!item.allowedRoles.includes(staffRole) && !isAdmin) return null;
 
                   return (
                     <Link
